@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: personalized-movie-recommender-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn run_flask:app
+    healthCheckPath: /api/health
