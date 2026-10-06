@@ -1,5 +1,10 @@
+import pandas as pd
+from app.database import add_movies
+from app.recommender import refresh_movies
 import streamlit as st
-from app.database import init_db, create_user, get_user, get_ratings, upsert_rating
+from app.database import (
+    init_db, create_user, authenticate_user, get_user, get_ratings, upsert_rating,
+)
 from app.recommender import load_movies, search_movies, similar_movies, recommend_for_user
 
 st.set_page_config(page_title="Personalized Movie Recommendation System", page_icon="🎬", layout="wide")
@@ -10,23 +15,49 @@ if "user_id" not in st.session_state:
 if "username" not in st.session_state:
     st.session_state.username = None
 
+
+def _login_state(user_id, username):
+    st.session_state.user_id = user_id
+    st.session_state.username = username
+
+
+def _logout():
+    st.session_state.user_id = None
+    st.session_state.username = None
+
+
 st.title("My Personalized Movie Recommender")
 st.caption("Rate movies you know, then discover movies matched to your taste.")
 
 with st.sidebar:
     st.header("Profile")
-    username = st.text_input("Username", value=st.session_state.username or "", placeholder="e.g. dipson")
-    if st.button("Create profile", use_container_width=True):
-        try:
-            user_id = create_user(username)
-            st.session_state.user_id = user_id
-            st.session_state.username = username.strip()
-            st.success("Profile created!")
-        except ValueError as exc:
-            st.error(str(exc))
 
     if st.session_state.user_id:
         st.info(f"Signed in as **{st.session_state.username}**")
+        if st.button("Log out", use_container_width=True):
+            _logout()
+            st.rerun()
+    else:
+        username = st.text_input("Username", placeholder="e.g. dipson")
+        password = st.text_input("Password", type="password", placeholder="At least 6 characters")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            if st.button("Create profile", use_container_width=True):
+                try:
+                    user_id = create_user(username, password)
+                    _login_state(user_id, username.strip())
+                    st.success("Profile created!")
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
+        with col_b:
+            if st.button("Log in", use_container_width=True):
+                try:
+                    user = authenticate_user(username, password)
+                    _login_state(user["id"], user["username"])
+                    st.rerun()
+                except ValueError as exc:
+                    st.error(str(exc))
 
     st.divider()
     all_genres = sorted({g for value in load_movies()["genres"] for g in value.split("|")})
@@ -100,7 +131,31 @@ with similar_tab:
 
 with catalog_tab:
     st.subheader("Movie catalog")
-    q = st.text_input("Search title, actor, director, genre, or keyword", key="catalog_search")
-    genre = st.selectbox("Genre", ["All"] + sorted({g for value in movies["genres"] for g in value.split("|")}))
-    catalog = search_movies(q, genre)
-    st.dataframe(catalog, hide_index=True, use_container_width=True)
+    st.caption(f"{len(movies)} movies currently in the catalog.")
+
+    if st.session_state.get("import_message"):
+        kind, text = st.session_state.pop("import_message")
+        (st.success if kind == "success" else st.error)(text)
+
+    uploaded = st.file_uploader(
+        "Upload a movies CSV",
+        type=["csv"],
+        help="Required column: title. Optional: year, genres (A|B|C), director, cast, keywords, overview, runtime.",
+    )
+    if uploaded is not None:
+        signature = (uploaded.name, uploaded.size)
+        if st.session_state.get("last_import") != signature:
+            st.session_state.last_import = signature
+            try:
+                df = pd.read_csv(uploaded)
+                df.columns = [c.strip().lower() for c in df.columns]
+                if "title" not in df.columns:
+                    raise ValueError("The CSV must have a 'title' column.")
+                added, skipped = add_movies(df.to_dict("records"))
+                refresh_movies()
+                st.session_state.import_message = (
+                    "success", f"Added {added} new movies. Skipped {skipped} (duplicates or missing title)."
+                )
+            except Exception as exc:
+                st.session_state.import_message = ("error", f"Could not import the file: {exc}")
+            st.rerun()

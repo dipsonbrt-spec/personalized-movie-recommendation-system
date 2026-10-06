@@ -3,18 +3,26 @@ import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from .config import MOVIES_PATH
+from .database import init_db, get_all_movies
 
 FEATURE_COLUMNS = ["genres", "director", "cast", "keywords", "overview"]
 
+
 @lru_cache(maxsize=1)
 def load_movies():
-    df = pd.read_csv(MOVIES_PATH)
+    init_db()
+    df = pd.DataFrame(get_all_movies())
     df["id"] = df["id"].astype(int)
     df["year"] = df["year"].astype(int)
     df["runtime"] = df["runtime"].astype(int)
     df["metadata"] = df[FEATURE_COLUMNS].fillna("").agg(" ".join, axis=1).str.lower()
     return df
+
+
+def refresh_movies():
+    """Call after the movies table changes so recommendations pick up new movies."""
+    load_movies.cache_clear()
+    get_vectorizer_and_matrix.cache_clear()
 
 @lru_cache(maxsize=1)
 def get_vectorizer_and_matrix():

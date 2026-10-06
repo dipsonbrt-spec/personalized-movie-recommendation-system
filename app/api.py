@@ -1,5 +1,5 @@
 from flask import Flask, jsonify, request
-from .database import init_db, create_user, get_user, get_ratings, upsert_rating
+from .database import init_db, create_user, authenticate_user, get_user, get_ratings, upsert_rating
 from .recommender import get_movie, search_movies, similar_movies, recommend_for_user
 
 
@@ -35,10 +35,20 @@ def create_app():
     def users():
         data = request.get_json(silent=True) or {}
         try:
-            user_id = create_user(str(data.get("username", "")))
-            return jsonify({"id": user_id, "username": data["username"].strip()}), 201
-        except (ValueError, KeyError) as exc:
+            username = str(data.get("username", "")).strip()
+            user_id = create_user(username, str(data.get("password", "")))
+            return jsonify({"id": user_id, "username": username}), 201
+        except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+
+    @app.post("/api/login")
+    def login():
+        data = request.get_json(silent=True) or {}
+        try:
+            user = authenticate_user(str(data.get("username", "")), str(data.get("password", "")))
+            return jsonify(user)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 401
 
     @app.get("/api/users/<int:user_id>")
     def user(user_id):
